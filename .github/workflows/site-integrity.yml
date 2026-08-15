@@ -1,0 +1,140 @@
+name: Site integrity
+
+on:
+  push:
+    paths:
+      - ".github/workflows/site-integrity.yml"
+      - "index.html"
+      - "daten/**"
+      - "assets/**"
+      - "robots.txt"
+      - "README.md"
+  pull_request:
+    paths:
+      - ".github/workflows/site-integrity.yml"
+      - "index.html"
+      - "daten/**"
+      - "assets/**"
+      - "robots.txt"
+      - "README.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  website:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate HTML, assets, and metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! command -v pdftotext >/dev/null || ! command -v pdfinfo >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y poppler-utils
+          fi
+
+          required_files=(
+            index.html
+            daten/index.html
+            daten/daten.css
+            assets/site.css
+            assets/site.js
+            assets/cover-front.jpg
+            assets/book3d.png
+            assets/autor-portraet.jpg
+            assets/chinas-aufstieg-leseprobe.pdf
+            assets/qr-kindle.png
+            assets/qr-paperback.png
+            assets/qr-hardcover.png
+          )
+
+          for path in "${required_files[@]}"; do
+            test -f "$path"
+          done
+
+          grep -q '<html lang="de">' index.html
+          grep -q '<meta name="viewport" content="width=device-width, initial-scale=1">' index.html
+          grep -q 'Zweite Auflage' index.html
+          grep -q 'Linus A. Conrad' index.html
+          grep -q 'Beijing Language and Culture University' index.html
+          grep -q '9798191531274' index.html
+          grep -q '9798191531281' index.html
+          grep -q '"numberOfPages": 306' index.html
+          grep -q '306 Seiten' index.html
+          grep -q 'assets/autor-portraet.jpg' index.html
+          grep -q 'alt="Porträt des Autors Linus A. Conrad"' index.html
+          grep -q 'href="assets/chinas-aufstieg-leseprobe.pdf"' index.html
+          grep -q 'href="https://www.amazon.de/dp/B0HF1M9J4R"' index.html
+          grep -q 'href="https://www.amazon.de/dp/B0HF1WFNK3"' index.html
+          grep -q 'href="https://www.amazon.de/dp/B0HF1NMTRQ"' index.html
+          grep -q 'src="assets/qr-kindle.png"' index.html
+          grep -q 'src="assets/qr-paperback.png"' index.html
+          grep -q 'src="assets/qr-hardcover.png"' index.html
+          grep -q 'Allow: /' robots.txt
+
+          test "$(pdfinfo assets/chinas-aufstieg-leseprobe.pdf | awk '/^Pages:/ {print $2}')" = 23
+          pdftotext assets/chinas-aufstieg-leseprobe.pdf /tmp/leseprobe.txt
+
+          excluded_sample_markers=(
+            'Inhaltsverzeichnis'
+            'Xi Jinping'
+            'KPCh'
+            'Kommunistische Partei Chinas'
+            'Kirchweg 1'
+            'la.paloma.gordita@gmail.com'
+          )
+
+          for marker in "${excluded_sample_markers[@]}"; do
+            if grep -Fqi "$marker" /tmp/leseprobe.txt; then
+              echo "Excluded public-sample marker found: $marker" >&2
+              exit 1
+            fi
+          done
+
+          private_markers=(
+            'Kirchweg 1'
+            '5400 Baden'
+            'la.paloma.gordita@gmail.com'
+            'mailto:'
+          )
+
+          for marker in "${private_markers[@]}"; do
+            for page in index.html daten/index.html; do
+              if grep -Fqi "$marker" "$page"; then
+                echo "Private contact detail found in $page: $marker" >&2
+                exit 1
+              fi
+            done
+          done
+
+          grep -q '<html lang="de">' daten/index.html
+          grep -q '<meta name="viewport" content="width=device-width, initial-scale=1">' daten/index.html
+          grep -q '<a class="skip-link" href="#charts">' daten/index.html
+
+      - name: Check for editor and temp artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          junk_patterns=(
+            '*.swp'
+            '*.swo'
+            '*~'
+            '*.tmp'
+            '*.bak'
+            '.DS_Store'
+          )
+
+          for pattern in "${junk_patterns[@]}"; do
+            if find . -name "$pattern" -print | grep -q .; then
+              echo "Found unwanted file pattern: $pattern" >&2
+              exit 1
+            fi
+          done
